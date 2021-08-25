@@ -5,42 +5,37 @@ using System.Diagnostics;
 
 public class Character : KinematicBody
 {
-    public int PeerId = -1;
+    [Puppet] private Vector3 sync_position = Vector3.Zero;
+    [Puppet] private Quat sync_orientation = Quat.Identity;
+    
+    private InputData input = InputData.Identity;
+
     [Export] public float Speed { get; set; } = 7.0f;
     [Export] public float MaxSpeed { get; set; } = 8.5f;
     [Export] public float Gravity { get; set; } = 21.0f;
     [Export] public float JumpPower { get; set; } = 9.0f;
     public Vector3 Velocity;
 
-    private readonly Queue<InputData> inputs;
-    private readonly LinkedList<CharacterPredictedData> historyMovements;
     private readonly Queue<CharacterInterpolatedData> interpolateStates;
 
     private CharacterInterpolatedData fromState, toState;
-    private CharacterPredictedData ackState;
     private float currentHeight;
-    private bool mustReconcile;
     private float snapshotWaitTime;
     private readonly Stopwatch watch;    // Time measure
-
 
     public Character()
     {
         Velocity = Vector3.Zero;
-        inputs = new Queue<InputData>();
-        historyMovements = new LinkedList<CharacterPredictedData>();
         interpolateStates = new Queue<CharacterInterpolatedData>();
         fromState = toState = CharacterInterpolatedData.Identity;
-        ackState = CharacterPredictedData.Identity;
         currentHeight = 0.0f;
-        mustReconcile = false;
         snapshotWaitTime = 0.0f;
         watch = new Stopwatch();
     }
 
     public override void _Ready()
     {
-        if (GameManager.ControllerId == PeerId)
+        if (IsNetworkMaster())
         {
             GetNode<CameraFollow>("Pivot/Camera").Current = true;
             watch.Start();
@@ -49,31 +44,23 @@ public class Character : KinematicBody
 
     public override void _Process(float delta)
     {
-        if (GameManager.ControllerId == PeerId)
+        if (IsNetworkMaster())
         {
-            InputData input = GetInput();
-            RpcId(1, nameof(QueueInput), input.Time, input.Direction, input.Jump);
-            QueueInput(input.Time, input.Direction, input.Jump);
+            input = GetInput();
         }
     }
 
     public override void _PhysicsProcess(float delta)
     {
-        if (GetTree().IsNetworkServer())
+        if (IsNetworkMaster())
         {
-            ProcessInputs(delta);
-            // Server only need 20 history movement to reconstruct the world.
-            while (20 <= historyMovements.Count)
-                historyMovements.RemoveFirst();
-        }
-        else if (GameManager.ControllerId == PeerId)
-        {
-            Reconcile(delta);
-            ProcessInputs(delta);
+            MoveAndRotate(input, delta);
+            RsetUnreliable(nameof(sync_position), GlobalTransform.origin);
+            RsetUnreliable(nameof(sync_orientation), GlobalTransform.basis.Quat().Normalized());
         }
         else
         {
-            Interpolate(delta);
+            GlobalTransform = new Transform(sync_orientation, sync_position);
         }
     }
 
@@ -95,45 +82,6 @@ public class Character : KinematicBody
             fromState = toState;
             toState = interpolateStates.Dequeue();
             currentHeight = 0.0f;
-        }
-    }
-
-    // Client reconcile state received from server.
-    private void Reconcile(float delta)
-    {
-        if (!mustReconcile || 0 == historyMovements.Count)
-            return;
-        mustReconcile = false;
-
-        while (historyMovements.Count != 0)
-        {
-            var state = historyMovements.First.Value;
-            if (ackState.Input.Time < state.Input.Time)
-                break;
-            historyMovements.RemoveFirst();
-        }
-
-        // Rewinds.
-        Velocity = ackState.VelocityRemain;
-        GlobalTransform = new Transform(ackState.Orientation, ackState.Position);
-
-        // Replay.
-        var node = historyMovements.First;
-        for (int i = 0; i < historyMovements.Count; ++i)
-        {
-            var state = node.Value;
-            node.Value = MoveAndRotate(state.Input, delta);
-            node = node.Next;
-        }
-    }
-
-    private void ProcessInputs(float delta)
-    {
-        while (inputs.Count != 0)
-        {
-            InputData input = inputs.Dequeue();
-            CharacterPredictedData state = MoveAndRotate(input, delta);
-            historyMovements.AddLast(state);
         }
     }
 
@@ -162,22 +110,6 @@ public class Character : KinematicBody
         input.Jump = Input.IsActionPressed("jump");
         input.Direction = input.Direction.Normalized();
         return input;
-    }
-
-    [RemoteSync]
-    private void QueueInput(double time, Vector2 direction, bool jump)
-    {
-        InputData input = InputData.Identity;
-        input.Time = time;
-        input.Direction = direction;
-        input.Jump = jump;
-        inputs.Enqueue(input);
-    }
-
-    [Remote]
-    private void QueueInterpolateState(CharacterInterpolatedData state)
-    {
-        interpolateStates.Enqueue(state);
     }
 
     public void Rotate(Vector2 Direction)
