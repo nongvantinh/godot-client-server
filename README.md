@@ -19,4 +19,6 @@ Game start lagging when 2 players join the game.
 I'll try another networking library to see if there is a better solution.
 - [yojimbo.net](https://github.com/netcode-io/yojimbo.net.git) returns with memory leak, I opened [an issue](https://github.com/netcode-io/yojimbo.net/issues/3) and it seems that this library is dead, It received no support from the creator, the C++ version of this library doesn't support mobile devices.
 - [LiteNetLib](https://github.com/RevenantX/LiteNetLib) seems promising. But lack of document. I opened an issue about [Usage](https://github.com/RevenantX/LiteNetLib/issues/452). The [example is here](https://github.com/nongvantinh/godot-client-server/files/7070250/test-lite-net-lib.zip)
+- [This](https://github.com/nongvantinh/godot-client-server/files/7103309/TestAttributes.zip) show how fields, properties, methods can be call over network.
+
 
